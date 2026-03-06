@@ -1,13 +1,11 @@
 """
 ann package – Multi-Layer Perceptron building blocks.
 """
-import sys, os
-sys.path.insert(0, os.path.dirname(__file__))
-from ann.neural_layer import NeuralLayer
-from ann.neural_network import NeuralNetwork
-from ann.activations import get_activation, sigmoid, tanh, relu, softmax
-from ann.objective_functions import get_loss, cross_entropy_loss, mse_loss
-from ann.optimizers import get_optimizer
+from .neural_layer import NeuralLayer
+from .neural_network import NeuralNetwork
+from .activations import get_activation, sigmoid, tanh, relu, softmax
+from .objective_functions import get_loss, cross_entropy_loss, mse_loss
+from .optimizers import get_optimizer
 
 __all__ = [
     "NeuralLayer",

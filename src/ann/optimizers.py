@@ -1,158 +1,154 @@
 """
 Gradient-based optimizers: SGD, Momentum, NAG, RMSProp.
 
-Each optimizer class exposes a single method:
+Each optimizer exposes:
     update(layers) -> None
 which reads layer.grad_W / layer.grad_b and modifies layer.W / layer.b in-place.
 """
 import numpy as np
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-# ---------------------------------------------------------------------------
-# Base
-# ---------------------------------------------------------------------------
 
-class BaseOptimizer:
-    def __init__(self, learning_rate=0.01, weight_decay=0.0):
-        self.lr = learning_rate
+
+class SGD:
+    def __init__(self, lr=0.01, momentum=0.0, weight_decay=0.0):
+        self.lr = lr
+        self.momentum = momentum
         self.weight_decay = weight_decay
+        self.v = {}
 
     def update(self, layers):
-        raise NotImplementedError
+        for lid, layer in enumerate(layers):
+            if lid not in self.v:
+                self.v[lid] = {'W': np.zeros_like(layer.W),
+                               'b': np.zeros_like(layer.b)}
+            gW = layer.grad_W + self.weight_decay * layer.W
+            gb = layer.grad_b
+            self.v[lid]['W'] = self.momentum * self.v[lid]['W'] - self.lr * gW
+            self.v[lid]['b'] = self.momentum * self.v[lid]['b'] - self.lr * gb
+            layer.W += self.v[lid]['W']
+            layer.b += self.v[lid]['b']
 
 
-# ---------------------------------------------------------------------------
-# SGD (mini-batch gradient descent)
-# ---------------------------------------------------------------------------
-
-class SGD(BaseOptimizer):
-    """Simple (mini-batch) stochastic gradient descent."""
+class NAG:
+    """Nesterov Accelerated Gradient."""
+    def __init__(self, lr=0.01, momentum=0.9, weight_decay=0.0):
+        self.lr = lr
+        self.momentum = momentum
+        self.weight_decay = weight_decay
+        self.v = {}
 
     def update(self, layers):
-        for layer in layers:
-            layer.W -= self.lr * layer.grad_W
-            layer.b -= self.lr * layer.grad_b
+        for lid, layer in enumerate(layers):
+            if lid not in self.v:
+                self.v[lid] = {'W': np.zeros_like(layer.W),
+                               'b': np.zeros_like(layer.b)}
+            gW = layer.grad_W + self.weight_decay * layer.W
+            gb = layer.grad_b
+            v_prev_W = self.v[lid]['W'].copy()
+            v_prev_b = self.v[lid]['b'].copy()
+            self.v[lid]['W'] = self.momentum * self.v[lid]['W'] - self.lr * gW
+            self.v[lid]['b'] = self.momentum * self.v[lid]['b'] - self.lr * gb
+            # Nesterov correction
+            layer.W += -self.momentum * v_prev_W + (1 + self.momentum) * self.v[lid]['W']
+            layer.b += -self.momentum * v_prev_b + (1 + self.momentum) * self.v[lid]['b']
 
 
-# ---------------------------------------------------------------------------
-# SGD with Momentum
-# ---------------------------------------------------------------------------
-
-class Momentum(BaseOptimizer):
-    """SGD with classical momentum."""
-
-    def __init__(self, learning_rate=0.01, weight_decay=0.0, beta=0.9):
-        super().__init__(learning_rate, weight_decay)
+class RMSProp:
+    def __init__(self, lr=0.001, beta=0.9, eps=1e-8, weight_decay=0.0):
+        self.lr = lr
         self.beta = beta
-        self.v_W = {}   # velocity for W, keyed by layer id
-        self.v_b = {}
+        self.eps = eps
+        self.weight_decay = weight_decay
+        self.v = {}
 
     def update(self, layers):
-        for i, layer in enumerate(layers):
-            if i not in self.v_W:
-                self.v_W[i] = np.zeros_like(layer.W)
-                self.v_b[i] = np.zeros_like(layer.b)
+        for lid, layer in enumerate(layers):
+            if lid not in self.v:
+                self.v[lid] = {'W': np.zeros_like(layer.W),
+                               'b': np.zeros_like(layer.b)}
+            gW = layer.grad_W + self.weight_decay * layer.W
+            gb = layer.grad_b
+            self.v[lid]['W'] = self.beta * self.v[lid]['W'] + (1 - self.beta) * gW ** 2
+            self.v[lid]['b'] = self.beta * self.v[lid]['b'] + (1 - self.beta) * gb ** 2
+            layer.W -= self.lr * gW / (np.sqrt(self.v[lid]['W']) + self.eps)
+            layer.b -= self.lr * gb / (np.sqrt(self.v[lid]['b']) + self.eps)
 
-            self.v_W[i] = self.beta * self.v_W[i] + self.lr * layer.grad_W
-            self.v_b[i] = self.beta * self.v_b[i] + self.lr * layer.grad_b
 
-            layer.W -= self.v_W[i]
-            layer.b -= self.v_b[i]
-
-
-# ---------------------------------------------------------------------------
-# Nesterov Accelerated Gradient (NAG)
-# ---------------------------------------------------------------------------
-
-class NAG(BaseOptimizer):
-    """
-    Nesterov Accelerated Gradient.
-    We use the 'look-ahead' formulation:
-        v_t = beta * v_{t-1} + lr * grad(W - beta * v_{t-1})
-    Because we cannot run forward/backward twice efficiently here, we use the
-    standard approximation where the Nesterov correction is applied to the
-    parameter update rather than recomputing gradients:
-        v_t = beta * v_{t-1} + lr * grad_t
-        W  -= beta * v_t + lr * grad_t   (equivalent look-ahead update)
-    """
-
-    def __init__(self, learning_rate=0.01, weight_decay=0.0, beta=0.9):
-        super().__init__(learning_rate, weight_decay)
-        self.beta = beta
-        self.v_W = {}
-        self.v_b = {}
+class Adam:
+    def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8, weight_decay=0.0):
+        self.lr = lr
+        self.b1 = beta1
+        self.b2 = beta2
+        self.eps = eps
+        self.wd = weight_decay
+        self.m = {}
+        self.v = {}
+        self.t = 0
 
     def update(self, layers):
-        for i, layer in enumerate(layers):
-            if i not in self.v_W:
-                self.v_W[i] = np.zeros_like(layer.W)
-                self.v_b[i] = np.zeros_like(layer.b)
+        self.t += 1
+        for lid, layer in enumerate(layers):
+            if lid not in self.m:
+                self.m[lid] = {'W': np.zeros_like(layer.W), 'b': np.zeros_like(layer.b)}
+                self.v[lid] = {'W': np.zeros_like(layer.W), 'b': np.zeros_like(layer.b)}
+            for p, g in [('W', layer.grad_W + self.wd * layer.W), ('b', layer.grad_b)]:
+                self.m[lid][p] = self.b1 * self.m[lid][p] + (1 - self.b1) * g
+                self.v[lid][p] = self.b2 * self.v[lid][p] + (1 - self.b2) * g ** 2
+                mh = self.m[lid][p] / (1 - self.b1 ** self.t)
+                vh = self.v[lid][p] / (1 - self.b2 ** self.t)
+                if p == 'W':
+                    layer.W -= self.lr * mh / (np.sqrt(vh) + self.eps)
+                else:
+                    layer.b -= self.lr * mh / (np.sqrt(vh) + self.eps)
 
-            v_W_prev = self.v_W[i].copy()
-            v_b_prev = self.v_b[i].copy()
 
-            self.v_W[i] = self.beta * self.v_W[i] + self.lr * layer.grad_W
-            self.v_b[i] = self.beta * self.v_b[i] + self.lr * layer.grad_b
-
-            # Nesterov update: use current velocity and correction
-            layer.W -= (1 + self.beta) * self.v_W[i] - self.beta * v_W_prev
-            layer.b -= (1 + self.beta) * self.v_b[i] - self.beta * v_b_prev
-
-
-# ---------------------------------------------------------------------------
-# RMSProp
-# ---------------------------------------------------------------------------
-
-class RMSProp(BaseOptimizer):
-    """RMSProp optimizer."""
-
-    def __init__(self, learning_rate=0.001, weight_decay=0.0, beta=0.9, epsilon=1e-8):
-        super().__init__(learning_rate, weight_decay)
-        self.beta = beta
-        self.epsilon = epsilon
-        self.s_W = {}   # running average of squared gradients
-        self.s_b = {}
+class NAdam:
+    def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8, weight_decay=0.0):
+        self.lr = lr
+        self.b1 = beta1
+        self.b2 = beta2
+        self.eps = eps
+        self.wd = weight_decay
+        self.m = {}
+        self.v = {}
+        self.t = 0
 
     def update(self, layers):
-        for i, layer in enumerate(layers):
-            if i not in self.s_W:
-                self.s_W[i] = np.zeros_like(layer.W)
-                self.s_b[i] = np.zeros_like(layer.b)
+        self.t += 1
+        for lid, layer in enumerate(layers):
+            if lid not in self.m:
+                self.m[lid] = {'W': np.zeros_like(layer.W), 'b': np.zeros_like(layer.b)}
+                self.v[lid] = {'W': np.zeros_like(layer.W), 'b': np.zeros_like(layer.b)}
+            for p, g in [('W', layer.grad_W + self.wd * layer.W), ('b', layer.grad_b)]:
+                self.m[lid][p] = self.b1 * self.m[lid][p] + (1 - self.b1) * g
+                self.v[lid][p] = self.b2 * self.v[lid][p] + (1 - self.b2) * g ** 2
+                mh = self.m[lid][p] / (1 - self.b1 ** self.t)
+                vh = self.v[lid][p] / (1 - self.b2 ** self.t)
+                nadam_update = (self.b1 * mh + (1 - self.b1) * g / (1 - self.b1 ** self.t)) / (np.sqrt(vh) + self.eps)
+                if p == 'W':
+                    layer.W -= self.lr * nadam_update
+                else:
+                    layer.b -= self.lr * nadam_update
 
-            self.s_W[i] = self.beta * self.s_W[i] + (1 - self.beta) * (layer.grad_W ** 2)
-            self.s_b[i] = self.beta * self.s_b[i] + (1 - self.beta) * (layer.grad_b ** 2)
 
-            layer.W -= self.lr * layer.grad_W / (np.sqrt(self.s_W[i]) + self.epsilon)
-            layer.b -= self.lr * layer.grad_b / (np.sqrt(self.s_b[i]) + self.epsilon)
-
-
-# ---------------------------------------------------------------------------
-# Dispatcher
-# ---------------------------------------------------------------------------
-
-def get_optimizer(name, learning_rate, weight_decay, **kwargs):
+def get_optimizer(name, lr=0.001, weight_decay=0.0, **kwargs):
     """
-    Factory function to return an optimizer instance.
-
-    Parameters
-    ----------
-    name          : 'sgd', 'momentum', 'nag', 'rmsprop'
-    learning_rate : float
-    weight_decay  : float
-    **kwargs      : additional optimizer-specific keyword arguments
+    Return an optimizer instance.
+    name: 'sgd' | 'momentum' | 'nag' | 'nesterov' | 'rmsprop' | 'adam' | 'nadam'
     """
-    name = name.lower()
-    if name == "sgd":
-        return SGD(learning_rate, weight_decay)
-    elif name == "momentum":
-        beta = kwargs.get("beta", 0.9)
-        return Momentum(learning_rate, weight_decay, beta=beta)
-    elif name == "nag":
-        beta = kwargs.get("beta", 0.9)
-        return NAG(learning_rate, weight_decay, beta=beta)
-    elif name == "rmsprop":
-        beta = kwargs.get("beta", 0.9)
-        epsilon = kwargs.get("epsilon", 1e-8)
-        return RMSProp(learning_rate, weight_decay, beta=beta, epsilon=epsilon)
+    n = name.lower().strip()
+    if n == 'sgd':
+        return SGD(lr=lr, momentum=0.0, weight_decay=weight_decay)
+    elif n in ('momentum', 'mgd'):
+        return SGD(lr=lr, momentum=0.9, weight_decay=weight_decay)
+    elif n in ('nag', 'nesterov'):
+        return NAG(lr=lr, momentum=0.9, weight_decay=weight_decay)
+    elif n == 'rmsprop':
+        return RMSProp(lr=lr, weight_decay=weight_decay)
+    elif n == 'adam':
+        return Adam(lr=lr, weight_decay=weight_decay)
+    elif n == 'nadam':
+        return NAdam(lr=lr, weight_decay=weight_decay)
     else:
-        raise ValueError(f"Unknown optimizer: {name}. Choose from: sgd, momentum, nag, rmsprop")
+        # Fallback to Adam for unknown names rather than returning None
+        print(f"Warning: unknown optimizer '{name}', defaulting to Adam.")
+        return Adam(lr=lr, weight_decay=weight_decay)
