@@ -1,1 +1,2 @@
-# DA6402_Assignment1
+# DA6401 Assignment 1
+Starter implementation for NumPy MLP.
