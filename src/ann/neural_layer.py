@@ -2,8 +2,6 @@
 NeuralLayer: a single fully-connected layer with optional activation.
 Stores gradients as self.grad_W and self.grad_b after every backward() call.
 """
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 import numpy as np
 from ann.activations import get_activation, softmax
 
