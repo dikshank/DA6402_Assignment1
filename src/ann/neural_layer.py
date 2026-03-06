@@ -11,6 +11,9 @@ class NeuralLayer:
     def forward(self,X):
         self.X=X
         self.Z=X@self.W+self.b
+        print("X:", X.shape)
+        print("W:", self.W.shape)
+        print("b:", self.b.shape)
         if self.activation:
             return self.activation.forward(self.Z)
         return self.Z

@@ -35,16 +35,10 @@ def train(args):
     X_train,y_train,X_test,y_test=load_dataset(args.dataset)
 
     model=NeuralNetwork(args)
-
-    model.add(NeuralLayer(784,128,ReLU()))
-    model.add(NeuralLayer(128,128,ReLU()))
-    model.add(NeuralLayer(128,10))
-
     loss_fn=CrossEntropy()
     optimizer=SGD()
 
     n=len(X_train)
-
     for epoch in range(args.epochs):
 
         for i in range(0,n,args.batch_size):
@@ -58,7 +52,7 @@ def train(args):
 
             grad=loss_fn.grad(yb,logits)
 
-            model.backward(grad)
+            model.backward(None, grad)
 
             optimizer.step(model.layers,args.learning_rate)
 

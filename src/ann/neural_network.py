@@ -1,30 +1,74 @@
+from .neural_layer import NeuralLayer
+from .activations import ReLU, Sigmoid, Tanh
+
 
 class NeuralNetwork:
 
-    def __init__(self,config=None):
-        self.layers=[]
-        self.config=config
+    def __init__(self, args):
 
-    def add(self,layer):
-        self.layers.append(layer)
+        self.layers = []
 
-    def forward(self,X):
-        out=X
+        input_size = 784
+
+        # activation selection
+        if args.activation == "relu":
+            activation = ReLU
+        elif args.activation == "sigmoid":
+            activation = Sigmoid
+        else:
+            activation = Tanh
+
+        # hidden layers
+        for size in args.hidden_size:
+            self.layers.append(
+                NeuralLayer(input_size, size, activation())
+            )
+            input_size = size
+
+        # output layer (logits)
+        self.layers.append(
+            NeuralLayer(input_size, 10)
+        )
+
+
+    # forward pass
+    def forward(self, X):
+
+        out = X
+
         for layer in self.layers:
-            out=layer.forward(out)
+            out = layer.forward(out)
+
         return out
 
-    def backward(self,grad):
-        for layer in reversed(self.layers):
-            grad=layer.backward(grad)
 
+    # backward pass
+    def backward(self, X, grad):
+
+        for layer in reversed(self.layers):
+            grad = layer.backward(grad)
+
+        return grad
+
+
+    # return weights for saving
     def get_weights(self):
-        weights=[]
+
+        weights = []
+
         for layer in self.layers:
-            weights.append({"W":layer.W,"b":layer.b})
+            weights.append({
+                "W": layer.W,
+                "b": layer.b
+            })
+
         return weights
 
-    def set_weights(self,weights):
-        for layer,w in zip(self.layers,weights):
-            layer.W=w["W"]
-            layer.b=w["b"]
+
+    # load weights (used by autograder)
+    def set_weights(self, weights):
+
+        for layer, w in zip(self.layers, weights):
+
+            layer.W = w["W"]
+            layer.b = w["b"]
