@@ -1,9 +1,7 @@
 """
 inference.py – Evaluate a saved MLP on test data.
 
-Usage:
-    python src/inference.py -d mnist --model_path src/best_model.npy \
-                            --config_path src/best_config.json
+The autograder calls: inference.parse_arguments()
 """
 import os
 import sys
@@ -11,9 +9,9 @@ import json
 import argparse
 import numpy as np
 
-# Ensure src/ and repo-root are on the path regardless of CWD
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_ROOT_DIR = os.path.dirname(_THIS_DIR)
+# Ensure src/ and repo-root are importable from any CWD
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))   # .../src
+_ROOT_DIR = os.path.dirname(_THIS_DIR)                    # repo root
 for _p in [_THIS_DIR, _ROOT_DIR]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -21,8 +19,18 @@ for _p in [_THIS_DIR, _ROOT_DIR]:
 from ann.neural_network import NeuralNetwork
 from utils.data_loader import load_dataset, get_class_names
 
+try:
+    from sklearn.metrics import (accuracy_score, precision_score,
+                                 recall_score, f1_score,
+                                 confusion_matrix, classification_report)
+    _SKLEARN = True
+except ImportError:
+    _SKLEARN = False
 
-def build_parser():
+
+# ── Argument parsing — autograder calls inference.parse_arguments() ──────────
+
+def parse_arguments():
     p = argparse.ArgumentParser(description="Evaluate saved MLP")
 
     p.add_argument("-d",   "--dataset",       type=str,   default="fashion_mnist")
@@ -42,64 +50,116 @@ def build_parser():
     p.add_argument("--val_split",              type=float, default=0.1)
     p.add_argument("--seed",                   type=int,   default=42)
     p.add_argument("--save_dir",               type=str,   default="src")
-    p.add_argument("--model_path",             type=str,   default="src/best_model.npy")
-    p.add_argument("--config_path",            type=str,   default="src/best_config.json")
-    return p
+    p.add_argument("--model_path",             type=str,   default=None)
+    p.add_argument("--config_path",            type=str,   default=None)
+    # Friend's style aliases
+    p.add_argument("--model",                  type=str,   default=None)
+    p.add_argument("--config",                 type=str,   default=None)
+    return p.parse_args()
+
+
+# Alias so both names work
+parse_args = parse_arguments
+
+
+def _find_file(candidates):
+    """Return first existing path from candidates list, or None."""
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
 
 
 def main():
-    args = build_parser().parse_args()
+    args = parse_arguments()
     np.random.seed(args.seed)
 
-    if isinstance(args.hidden_size, list) and len(args.hidden_size) == 1:
-        args.hidden_size = args.hidden_size[0]
+    # ── Resolve config file ───────────────────────────────────────────────────
+    config_path = _find_file([
+        args.config_path, args.config,
+        os.path.join(_THIS_DIR, 'best_config.json'),
+        os.path.join(_ROOT_DIR, 'src', 'best_config.json'),
+        os.path.join(_ROOT_DIR, 'models', 'best_config.json'),
+    ])
 
-    # ── Load config if available ──────────────────────────────────────────────
-    cfg = vars(args).copy()
-    if os.path.exists(args.config_path):
-        with open(args.config_path) as f:
-            saved = json.load(f)
-        cfg.update(saved)
-        print(f"Loaded config from {args.config_path}")
+    cfg = {}
+    if config_path:
+        with open(config_path) as f:
+            cfg = json.load(f)
+        print(f"Config loaded from {config_path}")
+
+    dataset = cfg.get('dataset', args.dataset)
 
     # ── Load data ─────────────────────────────────────────────────────────────
-    print(f"Loading {args.dataset} …")
+    print(f"Loading {dataset} …")
     X_train, y_train, X_val, y_val, X_test, y_test = load_dataset(
-        args.dataset, val_split=args.val_split, seed=args.seed
+        dataset, val_split=args.val_split, seed=args.seed
     )
 
-    # ── Rebuild model ─────────────────────────────────────────────────────────
-    model = NeuralNetwork(cfg)
+    # ── Rebuild model from config ─────────────────────────────────────────────
+    hs = cfg.get('hidden_sizes', cfg.get('hidden_size', [128]))
+    if isinstance(hs, int):
+        hs = [hs]
+    hs = [int(h) for h in hs]
+
+    model = NeuralNetwork(
+        input_size=int(X_test.shape[1]),
+        hidden_sizes=hs,
+        output_size=10,
+        activation=cfg.get('activation', 'relu'),
+        weight_init=cfg.get('weight_init', 'xavier'),
+        loss=cfg.get('loss', 'cross_entropy'),
+    )
 
     # ── Load weights ──────────────────────────────────────────────────────────
-    if not os.path.exists(args.model_path):
-        raise FileNotFoundError(f"Model file not found: {args.model_path}")
-    weights = np.load(args.model_path, allow_pickle=True).item()
-    model.set_weights(weights)
-    print(f"Loaded weights from {args.model_path}")
+    weights_path = _find_file([
+        args.model_path, args.model,
+        os.path.join(_THIS_DIR, 'best_model.npy'),
+        os.path.join(_ROOT_DIR, 'src', 'best_model.npy'),
+        os.path.join(_ROOT_DIR, 'models', 'best_model.npy'),
+    ])
+
+    # Also try JSON weights
+    json_weights = _find_file([
+        os.path.join(_THIS_DIR, 'best_model.json'),
+        os.path.join(_ROOT_DIR, 'src', 'best_model.json'),
+        os.path.join(_ROOT_DIR, 'models', 'best_model.json'),
+    ])
+
+    if json_weights:
+        with open(json_weights) as f:
+            d = json.load(f)
+        model.set_weights({k: np.array(v) for k, v in d.items()})
+        print(f"Weights loaded from {json_weights}")
+    elif weights_path:
+        data = np.load(weights_path, allow_pickle=True)
+        if hasattr(data, 'item'):
+            data = data.item()
+        model.set_weights(data)
+        print(f"Weights loaded from {weights_path}")
+    else:
+        print("[Warning] No saved weights found; using random weights.")
 
     # ── Evaluate ──────────────────────────────────────────────────────────────
-    test_acc  = model.compute_accuracy(X_test, y_test)
-    test_loss = model.compute_loss(X_test, y_test)
-    y_pred    = model.predict(X_test)
+    y_pred = model.predict(X_test).astype(int)
+    y_test = y_test.astype(int)
 
-    print(f"\nTest Accuracy : {test_acc:.4f}")
-    print(f"Test Loss     : {test_loss:.4f}")
-
-    try:
-        from sklearn.metrics import precision_score, recall_score, f1_score, classification_report
-        precision = precision_score(y_test, y_pred, average="macro", zero_division=0)
-        recall    = recall_score(y_test, y_pred, average="macro", zero_division=0)
-        f1        = f1_score(y_test, y_pred, average="macro", zero_division=0)
-        print(f"Precision     : {precision:.4f}")
-        print(f"Recall        : {recall:.4f}")
-        print(f"F1 (macro)    : {f1:.4f}")
-        print("\nClassification Report:")
-        print(classification_report(y_test, y_pred,
-                                    target_names=get_class_names(args.dataset),
-                                    zero_division=0))
-    except Exception as err:
-        print(f"[Warning] sklearn metrics failed: {err}")
+    if _SKLEARN:
+        acc  = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+        rec  = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+        f1   = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+        print(f"\n========== Evaluation Results ==========")
+        print(f"  Accuracy  : {acc:.4f}")
+        print(f"  Precision : {prec:.4f}")
+        print(f"  Recall    : {rec:.4f}")
+        print(f"  F1-Score  : {f1:.4f}")
+        print(classification_report(y_test, y_pred, zero_division=0))
+        return {'accuracy': acc, 'precision': prec, 'recall': rec, 'f1': f1}
+    else:
+        acc = float(np.mean(y_pred == y_test))
+        print(f"Accuracy: {acc:.4f}")
+        return {'accuracy': acc}
 
 
 if __name__ == "__main__":

@@ -1,12 +1,10 @@
 """
-NeuralNetwork: a configurable multi-layer perceptron.
+NeuralNetwork: configurable multi-layer perceptron.
 
-Key design decisions (per autograder requirements):
-- forward() returns raw logits (no softmax).
-- backward() propagates from last layer to first;
-  each layer exposes self.grad_W and self.grad_b.
-- get_weights() / set_weights() for model serialisation.
-- NeuralNetwork() accepts an argparse.Namespace, a dict, OR plain keyword args.
+- forward()  returns raw logits (no softmax)
+- backward() propagates last→first, each layer stores grad_W and grad_b
+- get_weights() / set_weights() for serialisation
+- Constructor accepts: argparse.Namespace, dict, OR plain keyword args
 """
 import argparse
 import numpy as np
@@ -17,49 +15,48 @@ from .optimizers import get_optimizer
 
 
 class NeuralNetwork:
-    """
-    Configurable fully-connected MLP.
-
-    Can be constructed three ways:
-        NeuralNetwork(args)                          # argparse.Namespace
-        NeuralNetwork({'num_layers': 2, ...})        # plain dict
-        NeuralNetwork(input_size=784, hidden_sizes=[128,128], activation='relu', ...)
-    """
-
     def __init__(self, args=None, input_size=784, output_size=10,
                  hidden_sizes=None, hidden_size=None, num_layers=None,
                  activation='relu', weight_init='xavier', loss='cross_entropy',
                  weight_decay=0.0, **kwargs):
 
-        # ── Resolve configuration from whatever was passed ─────────────────
+        # ── Resolve cfg dict from whatever was passed ───────────────────────
         if isinstance(args, argparse.Namespace):
             cfg = vars(args)
         elif isinstance(args, dict):
             cfg = args
         else:
-            # Called with plain keyword args (args is None or a positional int)
             cfg = {}
 
         def _get(key, default):
-            # keyword arg → cfg dict → fallback default
             return kwargs.get(key, cfg.get(key, default))
 
         self.input_size   = int(_get('input_size',  input_size))
         self.output_size  = int(_get('output_size', output_size))
         self.activation   = _get('activation',  activation)
         self.weight_init  = _get('weight_init', weight_init)
-        self.loss_name    = _get('loss',         loss)
+        self.loss_name    = _get('loss',        loss)
         self.weight_decay = float(_get('weight_decay', weight_decay))
 
-        _num_layers  = _get('num_layers',  num_layers)
-        _hidden_size = _get('hidden_size', hidden_size)
+        _num_layers   = _get('num_layers',   num_layers)
+        _hidden_size  = _get('hidden_size',  hidden_size)
         _hidden_sizes = _get('hidden_sizes', hidden_sizes)
+
+        # ── Flatten hidden_size if argparse gave us a list ─────────────────
+        if isinstance(_hidden_size, (list, tuple)):
+            if len(_hidden_size) == 1:
+                _hidden_size = _hidden_size[0]
+            # if it's a multi-element list, treat as hidden_sizes
+            elif _hidden_sizes is None:
+                _hidden_sizes = _hidden_size
+                _hidden_size = None
 
         # ── Build hidden_sizes list ─────────────────────────────────────────
         if _hidden_sizes is not None:
             if isinstance(_hidden_sizes, (int, np.integer)):
-                _hidden_sizes = [int(_hidden_sizes)]
-            hidden = [int(h) for h in _hidden_sizes]
+                hidden = [int(_hidden_sizes)]
+            else:
+                hidden = [int(h) for h in _hidden_sizes]
         elif _hidden_size is not None and _num_layers is not None:
             hidden = [int(_hidden_size)] * int(_num_layers)
         elif _hidden_size is not None:
@@ -76,10 +73,9 @@ class NeuralNetwork:
         sizes = [self.input_size] + hidden + [self.output_size]
         for i in range(len(sizes) - 1):
             is_output = (i == len(sizes) - 2)
-            act = 'linear' if is_output else self.activation
             self.layers.append(
                 NeuralLayer(sizes[i], sizes[i + 1],
-                            activation=act,
+                            activation='linear' if is_output else self.activation,
                             weight_init=self.weight_init,
                             is_output=is_output)
             )
@@ -87,48 +83,29 @@ class NeuralNetwork:
         # ── Loss function ───────────────────────────────────────────────────
         self.loss_fn, self.loss_grad_fn = get_loss(self.loss_name)
 
-    # ───────────────────────────────────────────────────────────────────────
-    # Forward pass
-    # ───────────────────────────────────────────────────────────────────────
+    # ── Forward ─────────────────────────────────────────────────────────────
 
     def forward(self, X):
-        """
-        Forward pass through all layers.
-        Returns raw logits (no softmax), shape (batch, output_size).
-        """
+        """Returns raw logits, shape (batch, output_size)."""
         out = X
         for layer in self.layers:
             out = layer.forward(out)
         return out
 
-    # ───────────────────────────────────────────────────────────────────────
-    # Backward pass
-    # ───────────────────────────────────────────────────────────────────────
+    # ── Backward ────────────────────────────────────────────────────────────
 
     def backward(self, logits, y_true):
         """
-        Compute and store gradients from last layer to first.
-
-        Parameters
-        ----------
-        logits : (batch, output_size) – raw outputs from forward()
-        y_true : (batch,) integer labels
-
-        Returns
-        -------
-        grad_Ws, grad_bs – lists ordered layer 0 → last
+        Compute gradients from last layer to first.
+        Returns (grad_Ws, grad_bs) lists ordered layer 0 → last.
+        Each layer's grad_W and grad_b are also set in-place.
         """
         dA = self.loss_grad_fn(logits, y_true)
         for layer in reversed(self.layers):
             dA = layer.backward(dA, weight_decay=self.weight_decay)
+        return [l.grad_W for l in self.layers], [l.grad_b for l in self.layers]
 
-        grad_W = [l.grad_W for l in self.layers]
-        grad_b = [l.grad_b for l in self.layers]
-        return grad_W, grad_b
-
-    # ───────────────────────────────────────────────────────────────────────
-    # Prediction helpers
-    # ───────────────────────────────────────────────────────────────────────
+    # ── Helpers ─────────────────────────────────────────────────────────────
 
     def predict_proba(self, X):
         return softmax(self.forward(X))
@@ -142,15 +119,10 @@ class NeuralNetwork:
     def compute_accuracy(self, X, y):
         return float(np.mean(self.predict(X) == y))
 
-    # ───────────────────────────────────────────────────────────────────────
-    # Weight serialisation  (required by autograder)
-    # ───────────────────────────────────────────────────────────────────────
+    # ── Serialisation ───────────────────────────────────────────────────────
 
     def get_weights(self):
-        """
-        Return a flat dict suitable for np.save / np.load.
-        Keys: 'W0', 'b0', 'W1', 'b1', ...
-        """
+        """Return dict {'W0': ..., 'b0': ..., 'W1': ..., 'b1': ...}"""
         d = {}
         for i, layer in enumerate(self.layers):
             d[f'W{i}'] = layer.W.copy()
@@ -158,10 +130,6 @@ class NeuralNetwork:
         return d
 
     def set_weights(self, weights):
-        """
-        Load from a dict  {'W0': ..., 'b0': ..., ...}
-        or from np.load(..., allow_pickle=True).item()
-        """
         if isinstance(weights, np.ndarray) and weights.ndim == 0:
             weights = weights.item()
         if isinstance(weights, dict):
@@ -171,54 +139,62 @@ class NeuralNetwork:
                 if f'b{i}' in weights:
                     layer.b = np.array(weights[f'b{i}']).copy()
         else:
-            # fallback: flat list [W0, b0, W1, b1, ...]
             weights = list(weights)
             for i, layer in enumerate(self.layers):
                 layer.W = np.array(weights[2 * i]).copy()
                 layer.b = np.array(weights[2 * i + 1]).copy()
 
-    # ───────────────────────────────────────────────────────────────────────
-    # Training loop
-    # ───────────────────────────────────────────────────────────────────────
+    def save(self, path):
+        import os, json
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        np.save(path, self.get_weights())
+        jpath = path.replace('.npy', '.json')
+        with open(jpath, 'w') as f:
+            json.dump({k: v.tolist() for k, v in self.get_weights().items()}, f)
+
+    def load(self, path):
+        import json, os
+        jpath = path.replace('.npy', '.json')
+        if os.path.exists(jpath):
+            with open(jpath) as f:
+                d = json.load(f)
+            self.set_weights({k: np.array(v) for k, v in d.items()})
+        else:
+            self.set_weights(np.load(path, allow_pickle=True))
+
+    # ── Training loop ───────────────────────────────────────────────────────
 
     def fit(self, X_train, y_train, X_val, y_val, args, wandb_run=None):
-        """Full training loop with optional W&B logging."""
         cfg = vars(args) if isinstance(args, argparse.Namespace) else dict(args)
 
         epochs     = int(cfg.get('epochs',        10))
         batch_size = int(cfg.get('batch_size',    32))
-        opt_name   = cfg.get('optimizer',         'rmsprop')
+        opt_name   = cfg.get('optimizer',         'adam')
         lr         = float(cfg.get('learning_rate', 0.001))
         wd         = float(cfg.get('weight_decay',  0.0))
 
         optimizer = get_optimizer(opt_name, lr, wd)
-
         n = X_train.shape[0]
-        best_val_acc = -1.0
-        best_weights = None
+        best_val_acc, best_weights = -1.0, None
 
         for epoch in range(1, epochs + 1):
             idx = np.random.permutation(n)
             X_shuf, y_shuf = X_train[idx], y_train[idx]
-
-            epoch_loss = 0.0
-            num_batches = 0
+            epoch_loss, num_batches = 0.0, 0
 
             for start in range(0, n, batch_size):
                 Xb = X_shuf[start: start + batch_size]
                 yb = y_shuf[start: start + batch_size]
-
                 logits = self.forward(Xb)
                 epoch_loss += self.loss_fn(logits, yb)
                 num_batches += 1
-
                 self.backward(logits, yb)
                 optimizer.update(self.layers)
 
-            avg_loss  = epoch_loss / num_batches
             train_acc = self.compute_accuracy(X_train, y_train)
-            val_acc   = self.compute_accuracy(X_val,   y_val)
+            val_acc   = self.compute_accuracy(X_val, y_val)
             val_loss  = self.compute_loss(X_val, y_val)
+            avg_loss  = epoch_loss / num_batches
 
             print(f"Epoch {epoch:3d}/{epochs} | Loss: {avg_loss:.4f} | "
                   f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
