@@ -1,2 +1,3 @@
-# DA6401 Assignment 1
-Starter implementation for NumPy MLP.
+
+DA6401 Assignment 1 - NumPy MLP
+Starter project compatible with the assignment autograder.
