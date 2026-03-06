@@ -1,6 +1,5 @@
-
-numpy
-scikit-learn
-keras
-matplotlib
-wandb
+numpy>=1.23
+keras>=2.12
+scikit-learn>=1.2
+matplotlib>=3.6
+wandb>=0.15
