@@ -3,6 +3,8 @@ Loss / objective functions and their gradients.
 
 Both functions receive *logits* (raw pre-softmax values) from the network.
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 import numpy as np
 from ann.activations import softmax
 

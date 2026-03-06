@@ -7,6 +7,8 @@ Key design decisions (per autograder requirements):
   each layer exposes self.grad_W and self.grad_b.
 - get_weights() / set_weights() for model serialisation.
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 import numpy as np
 from ann.neural_layer import NeuralLayer
 from ann.activations import softmax

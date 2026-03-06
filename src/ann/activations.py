@@ -1,7 +1,10 @@
 """
 Activation functions and their derivatives for the MLP.
 """
+import sys, os
 import numpy as np
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+
 
 
 def sigmoid(z):
