@@ -8,6 +8,8 @@ Key design decisions (per autograder requirements):
 - get_weights() / set_weights() for model serialisation.
 """
 import numpy as np
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from ann.neural_layer import NeuralLayer
 from ann.activations import softmax
 from ann.objective_functions import get_loss

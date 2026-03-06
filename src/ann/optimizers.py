@@ -6,7 +6,8 @@ Each optimizer class exposes a single method:
 which reads layer.grad_W / layer.grad_b and modifies layer.W / layer.b in-place.
 """
 import numpy as np
-
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # ---------------------------------------------------------------------------
 # Base
 # ---------------------------------------------------------------------------

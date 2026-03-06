@@ -5,7 +5,8 @@ Both functions receive *logits* (raw pre-softmax values) from the network.
 """
 import numpy as np
 from ann.activations import softmax
-
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # ---------------------------------------------------------------------------
 # Cross-Entropy Loss  (with built-in Softmax)
