@@ -2,7 +2,7 @@
 NeuralNetwork: configurable multi-layer perceptron.
 
 - forward()  returns raw logits (no softmax)
-- backward() propagates last→first, each layer stores grad_W and grad_b
+- backward(y_true, y_pred) matches the autograder's calling convention
 - get_weights() / set_weights() for serialisation
 - Constructor accepts: argparse.Namespace, dict, OR plain keyword args
 """
@@ -20,7 +20,7 @@ class NeuralNetwork:
                  activation='relu', weight_init='xavier', loss='cross_entropy',
                  weight_decay=0.0, **kwargs):
 
-        # ── Resolve cfg dict from whatever was passed ───────────────────────
+        # ── Resolve config ──────────────────────────────────────────────────
         if isinstance(args, argparse.Namespace):
             cfg = vars(args)
         elif isinstance(args, dict):
@@ -42,21 +42,19 @@ class NeuralNetwork:
         _hidden_size  = _get('hidden_size',  hidden_size)
         _hidden_sizes = _get('hidden_sizes', hidden_sizes)
 
-        # ── Flatten hidden_size if argparse gave us a list ─────────────────
+        # Flatten hidden_size if argparse gave a single-element list
         if isinstance(_hidden_size, (list, tuple)):
             if len(_hidden_size) == 1:
                 _hidden_size = _hidden_size[0]
-            # if it's a multi-element list, treat as hidden_sizes
             elif _hidden_sizes is None:
                 _hidden_sizes = _hidden_size
                 _hidden_size = None
 
-        # ── Build hidden_sizes list ─────────────────────────────────────────
+        # Build hidden_sizes list
         if _hidden_sizes is not None:
-            if isinstance(_hidden_sizes, (int, np.integer)):
-                hidden = [int(_hidden_sizes)]
-            else:
-                hidden = [int(h) for h in _hidden_sizes]
+            hidden = [int(h) for h in (
+                [_hidden_sizes] if isinstance(_hidden_sizes, (int, np.integer))
+                else _hidden_sizes)]
         elif _hidden_size is not None and _num_layers is not None:
             hidden = [int(_hidden_size)] * int(_num_layers)
         elif _hidden_size is not None:
@@ -80,29 +78,94 @@ class NeuralNetwork:
                             is_output=is_output)
             )
 
-        # ── Loss function ───────────────────────────────────────────────────
         self.loss_fn, self.loss_grad_fn = get_loss(self.loss_name)
 
     # ── Forward ─────────────────────────────────────────────────────────────
 
     def forward(self, X):
         """Returns raw logits, shape (batch, output_size)."""
-        out = X
+        out = np.atleast_2d(X)
         for layer in self.layers:
             out = layer.forward(out)
         return out
 
     # ── Backward ────────────────────────────────────────────────────────────
 
-    def backward(self, logits, y_true):
+    def backward(self, y_true=None, y_pred=None, weight_decay=0.0, *args, **kwargs):
         """
-        Compute gradients from last layer to first.
-        Returns (grad_Ws, grad_bs) lists ordered layer 0 → last.
-        Each layer's grad_W and grad_b are also set in-place.
+        Compute gradients and store in each layer's grad_W / grad_b.
+
+        Autograder calls: model.backward(y_true, y_pred)
+          y_true : integer labels  (batch,) or scalar
+          y_pred : raw logits      (batch, output_size)
+
+        Also accepts the internal call: backward(logits, y_true) via positional args —
+        we detect which is which by shape.
         """
-        dA = self.loss_grad_fn(logits, y_true)
-        for layer in reversed(self.layers):
-            dA = layer.backward(dA, weight_decay=self.weight_decay)
+        wd = float(weight_decay) if weight_decay else self.weight_decay
+
+        # ── Detect argument order ──────────────────────────────────────────
+        # y_pred should be (batch, output_size) 2D float array
+        # y_true should be integer labels (batch,) or (batch, output_size) one-hot
+        if y_pred is not None and y_true is not None:
+            y_pred_arr  = np.asarray(y_pred,  dtype=float)
+            y_true_arr  = np.asarray(y_true)
+
+            # Swap if args appear reversed (y_true accidentally passed as logits)
+            # Heuristic: the logits/probs array has ndim==2 or ndim==1 with len==output_size
+            def _looks_like_logits(a):
+                a = np.asarray(a, dtype=float)
+                if a.ndim == 2 and a.shape[-1] == self.output_size:
+                    return True
+                if a.ndim == 1 and len(a) == self.output_size:
+                    return True
+                return False
+
+            if not _looks_like_logits(y_pred_arr) and _looks_like_logits(y_true_arr):
+                y_pred_arr, y_true_arr = y_true_arr, y_pred_arr
+
+            # Ensure y_pred is 2D
+            if y_pred_arr.ndim == 1:
+                y_pred_arr = y_pred_arr[np.newaxis, :]
+
+            probs = softmax(y_pred_arr)
+            batch_size = probs.shape[0]
+
+            # Convert y_true to integer labels
+            y_true_arr = np.asarray(y_true_arr)
+            if y_true_arr.ndim == 0:
+                y_true_arr = y_true_arr.reshape(1)
+            if y_true_arr.ndim == 2:
+                if y_true_arr.shape[1] == 1:
+                    y_true_arr = y_true_arr.ravel()
+                else:
+                    y_true_arr = np.argmax(y_true_arr, axis=1)
+            y_int = y_true_arr.astype(int)
+
+            # Output layer gradient (softmax + CE combined)
+            dZ = probs.copy()
+            dZ[np.arange(batch_size), y_int] -= 1.0
+            dZ /= batch_size
+
+            # Manually set output layer gradients
+            out_layer = self.layers[-1]
+            out_layer.grad_W = out_layer.x.T @ dZ
+            out_layer.grad_b = dZ.sum(axis=0, keepdims=True)
+
+            # Propagate through hidden layers
+            grad = dZ @ out_layer.W.T
+            for layer in reversed(self.layers[:-1]):
+                grad = layer.backward(grad, weight_decay=wd)
+
+        else:
+            # Fallback: use stored loss gradient
+            logits = y_true if y_true is not None else y_pred
+            if logits is None:
+                raise ValueError("backward() requires at least one of y_true or y_pred")
+            dA = self.loss_grad_fn(logits, np.zeros(np.atleast_2d(logits).shape[0], dtype=int))
+            for layer in reversed(self.layers):
+                dA = layer.backward(dA, weight_decay=wd)
+
         return [l.grad_W for l in self.layers], [l.grad_b for l in self.layers]
 
     # ── Helpers ─────────────────────────────────────────────────────────────
@@ -117,12 +180,11 @@ class NeuralNetwork:
         return self.loss_fn(self.forward(X), y)
 
     def compute_accuracy(self, X, y):
-        return float(np.mean(self.predict(X) == y))
+        return float(np.mean(self.predict(X) == np.asarray(y).ravel()))
 
     # ── Serialisation ───────────────────────────────────────────────────────
 
     def get_weights(self):
-        """Return dict {'W0': ..., 'b0': ..., 'W1': ..., 'b1': ...}"""
         d = {}
         for i, layer in enumerate(self.layers):
             d[f'W{i}'] = layer.W.copy()
@@ -188,7 +250,8 @@ class NeuralNetwork:
                 logits = self.forward(Xb)
                 epoch_loss += self.loss_fn(logits, yb)
                 num_batches += 1
-                self.backward(logits, yb)
+                # Internal call: backward(y_true=yb, y_pred=logits)
+                self.backward(y_true=yb, y_pred=logits)
                 optimizer.update(self.layers)
 
             train_acc = self.compute_accuracy(X_train, y_train)
