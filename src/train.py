@@ -109,7 +109,8 @@ def main():
         pass
 
     # ── Save model & config ────────────────────────────────────────────────────
-    save_dir = args.save_dir
+    # Always save next to train.py (absolute path), regardless of CWD
+    save_dir = _THIS_DIR
     os.makedirs(save_dir, exist_ok=True)
     model_path  = os.path.join(save_dir, "best_model.npy")
     config_path = os.path.join(save_dir, "best_config.json")
