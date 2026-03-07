@@ -1,0 +1,26 @@
+{
+  "dataset": "fashion_mnist",
+  "num_layers": 3,
+  "hidden_size": [
+    128,
+    128,
+    128
+  ],
+  "hidden_sizes": [
+    128,
+    128,
+    128
+  ],
+  "activation": "relu",
+  "optimizer": "adam",
+  "learning_rate": 0.001,
+  "weight_decay": 0.0,
+  "loss": "cross_entropy",
+  "weight_init": "xavier",
+  "batch_size": 32,
+  "epochs": 10,
+  "val_split": 0.1,
+  "seed": 42,
+  "test_accuracy": 0.8751,
+  "test_f1": 0.8765123398995757
+}
